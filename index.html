@@ -819,7 +819,10 @@ var ge = class {
       H(this, `onLock`, () => {}),
       H(this, `onBest`, () => {}),
       H(this, `onWindMode`, () => {}),
-      H(this, `onWind`, () => {}));
+      H(this, `onWind`, () => {}),
+      H(this, `onSpeed`, () => {}),
+      H(this, `onEsc`, () => {}),
+      H(this, `rudT`, 0));
     let t = (e) => `${Math.round(e * 100)}%`;
     ((this.main = new U(W(`main-sheet`), `vertical`, 0, 1, e.mainSheet, t)),
       (this.genoa = new U(W(`genoa-sheet`), `vertical`, 0, 1, e.genoaSheet, t)),
@@ -839,12 +842,18 @@ var ge = class {
             t: () => this.onBest(),
             m: () => this.onWindMode(),
             h: () => document.getElementById(`btn-help`)?.click(),
+            escape: () => this.onEsc(),
           },
           // Wind keys repeat while held (the OS key repeat does the work).
           w = { ",": [-5, 0], ".": [5, 0], "-": [0, -1], "+": [0, 1], "=": [0, 1] }[t];
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         if (w) {
           (this.onWind(w[0], w[1]), e.preventDefault());
+          return;
+        }
+        let sp = { f: 10, g: -10 }[t];
+        if (sp) {
+          this.onSpeed(sp);
           return;
         }
         (n[t] ? e.repeat || n[t]() : this.keys.add(t),
@@ -896,8 +905,11 @@ var ge = class {
       this.has(`u`) && this.car.set(this.car.value - n * e));
     let r = this.has(`a`, `arrowleft`),
       i = this.has(`d`, `arrowright`);
-    if (r !== i) this.rudder.set(this.rudder.value + (i ? 1 : -1) * 2.5 * e);
-    else if (!this.locked && !this.rudder.held && this.rudder.value !== 0) {
+    if (r !== i) {
+      // Keyboard helm: start slowly (about 7°/s, so a short tap is under 1°) and speed up the longer the key is held.
+      this.rudT += e;
+      this.rudder.set(this.rudder.value + (i ? 1 : -1) * (0.25 + 0.75 * Math.min(1, this.rudT / 2)) * e);
+    } else if (((this.rudT = 0), !this.locked && !this.rudder.held && this.rudder.value !== 0)) {
       let t = 3.5 * e,
         n = this.rudder.value;
       this.rudder.set(Math.abs(n) <= t ? 0 : n - Math.sign(n) * t);
@@ -1790,7 +1802,7 @@ function Oe(e, t, n) {
 }
 var ke = 0.514444,
   Ae = `sailtrim.settings`,
-  Q = { loa: 10, twsKn: 14, gusts: 1, shifts: 1, windMode: `auto`, twdDeg: 0 },
+  Q = { loa: 10, twsKn: 14, gusts: 1, shifts: 1, windMode: `auto`, twdDeg: 0, speed: 100 },
   je = [0, 0.35, 0.65, 1],
   Me = [0, 5, 12],
   Ne = (e, t, n) => Math.min(n, Math.max(t, e));
@@ -1802,6 +1814,7 @@ function Pe(e) {
       typeof n.twsKn == `number` && Number.isFinite(n.twsKn) && (t.twsKn = Ne(Math.round(n.twsKn), 2, 30)),
       typeof n.twdDeg == `number` && Number.isFinite(n.twdDeg) && (t.twdDeg = (((Math.round(n.twdDeg / 5) * 5) % 360) + 360) % 360),
       (n.windMode === `auto` || n.windMode === `manual`) && (t.windMode = n.windMode),
+      typeof n.speed == `number` && Number.isFinite(n.speed) && (t.speed = Ne(Math.round(n.speed / 10) * 10, 10, 100)),
       (n.gusts === 0 || n.gusts === 1 || n.gusts === 2 || n.gusts === 3) && (t.gusts = n.gusts),
       (n.shifts === 0 || n.shifts === 1 || n.shifts === 2) && (t.shifts = n.shifts));
   }
@@ -1872,7 +1885,8 @@ var ze = class {
         (this.onChange = t),
         this.loa.addEventListener(`input`, () => this.update({ loa: Number(this.loa.value) })),
         this.tws.addEventListener(`input`, () => this.update({ twsKn: Number(this.tws.value) })),
-        this.twd.addEventListener(`input`, () => this.update({ twdDeg: Number(this.twd.value) })));
+        this.twd.addEventListener(`input`, () => this.update({ twdDeg: Number(this.twd.value) })),
+        W(`s-speed`).addEventListener(`input`, (e) => this.update({ speed: Number(e.target.value) })));
       for (let e of this.dialog.querySelectorAll(`input[name="windmode"]`)) e.addEventListener(`change`, () => this.update({ windMode: e.value }));
       for (let e of this.dialog.querySelectorAll(`input[name="gusts"]`))
         e.addEventListener(`change`, () => this.update({ gusts: Number(e.value) }));
@@ -1908,6 +1922,7 @@ var ze = class {
       for (let t of this.dialog.querySelectorAll(`input[name="gusts"]`)) t.checked = Number(t.value) === e.gusts;
       for (let t of this.dialog.querySelectorAll(`input[name="shifts"]`)) t.checked = Number(t.value) === e.shifts;
       let m = e.windMode === `manual`;
+      ((W(`s-speed`).value = String(e.speed)), (W(`s-speed-out`).textContent = String(e.speed)));
       ((this.twd.value = String(e.twdDeg)), (this.twdOut.textContent = `${String(e.twdDeg).padStart(3, `0`)}° ${Ze(e.twdDeg)}`));
       for (let t of this.dialog.querySelectorAll(`input[name="windmode"]`)) t.checked = t.value === e.windMode;
       ((W(`s-gusts`).disabled = m), (W(`s-shifts`).disabled = m));
@@ -1972,10 +1987,48 @@ function Ye(e) {
     ((S = []), (C = -1));
   };
   let flash = null,
+    simSpeed = 1,
     DEG = Math.PI / 180,
+    pop = W(`trim-pop`),
+    pct = (v) => `${Math.round(v * 100)}%`,
+    // One row per sail control: [label, key, formatter, word when the value goes up, word when it goes down]
+    popRows = [
+      [`Main sheet`, `mainSheet`, pct, `Sheet in`, `Ease`],
+      [`Traveller`, `traveller`, me, `Up`, `Down`],
+      [`Vang`, `vang`, pct, `Tighten`, `Ease`],
+      [`Genoa sheet`, `genoaSheet`, pct, `Sheet in`, `Ease`],
+      [`Genoa car`, `genoaCar`, he, `Aft`, `Forward`],
+    ],
+    hidePop = () => {
+      pop.hidden = !0;
+    },
+    showPop = (was, now, twa, tws) => {
+      let body = W(`trim-pop-rows`);
+      body.textContent = ``;
+      for (let [label, key, fmt, up, down] of popRows) {
+        let a = fmt(was[key] ?? 0),
+          b = fmt(now[key] ?? 0),
+          same = a === b,
+          tr = document.createElement(`tr`);
+        same && tr.classList.add(`same`);
+        for (let [tag, text, cls] of [
+          [`th`, label, ``],
+          [`td`, a, `was`],
+          [`td`, b, `now`],
+          [`td`, same ? `No change` : now[key] > was[key] ? up : down, `act`],
+        ]) {
+          let c = document.createElement(tag);
+          ((c.textContent = text), cls && (c.className = cls), tag === `th` && (c.scope = `row`), tr.appendChild(c));
+        }
+        body.appendChild(tr);
+      }
+      ((W(`trim-pop-sub`).textContent = `${Math.round(twa / DEG)}° true wind angle · ${Math.round(tws / ke)} kn wind`),
+        (W(`trim-pop-foot`).textContent = `Expected speed ${(now.u / ke).toFixed(1)} kn. Hold your course.`),
+        (pop.hidden = !1));
+    },
     windPanel = W(`wind-panel`),
     windBtn = W(`btn-wind`),
-    hudPanels = [W(`telltales`).parentElement, W(`wind-dial`).closest(`.panel`), windPanel],
+    hudPanels = [W(`telltales`).parentElement, W(`wind-dial`).closest(`.panel`), windPanel, W(`speed-panel`), pop],
     showWind = (st) => {
       let man = st.windMode === `manual`;
       ((windPanel.dataset.mode = st.windMode),
@@ -1983,12 +2036,16 @@ function Ye(e) {
         (windBtn.textContent = man ? `Wind: manual` : `Wind: auto`),
         (W(`w-spd`).textContent = String(st.twsKn)),
         (W(`w-dir`).textContent = String(st.twdDeg).padStart(3, `0`)),
-        (W(`w-dir-name`).textContent = Ze(st.twdDeg)));
+        (W(`w-dir-name`).textContent = Ze(st.twdDeg)),
+        (simSpeed = st.speed / 100),
+        (W(`sim-spd`).textContent = String(st.speed)),
+        (W(`sim-dn`).disabled = st.speed <= 10),
+        (W(`sim-up`).disabled = st.speed >= 100));
     };
   showWind(o);
   ((r.onPause = () => (_ = !_)),
     (r.onReset = () => {
-      ((d = qe()), (f = d), O(), (r.value = Ve), (p = y(l, 0, 0, 0)), (m = p.tws), (h = p.twd));
+      ((d = qe()), (f = d), O(), (r.value = Ve), (p = y(l, 0, 0, 0)), (m = p.tws), (h = p.twd), hidePop());
     }),
     (r.onView = () => {
       ((g = !g), Ke(g), T());
@@ -2000,12 +2057,15 @@ function Ye(e) {
       // Solve the best trim for exactly this wind angle and strength, starting from the nearest polar entry.
       let twa = Math.abs(a(p.twd - d.psi)),
         best = fe(twa, p.tws, s, c.lookup(twa, p.tws)),
+        was = r.value,
         until = performance.now() + 4500;
       if (best.u < 0.25) {
+        hidePop();
         flash = { tone: `warn`, text: `No trim works this close to the wind. Bear away first, then try again.`, until };
         return;
       }
       (r.trimTo(best),
+        showPop(was, best, twa, p.tws),
         (flash = {
           tone: `good`,
           text: `Best trim for ${Math.round(twa / DEG)}° true wind angle in ${Math.round(p.tws / ke)} kn. Watch where the controls go.`,
@@ -2017,6 +2077,11 @@ function Ye(e) {
       let st = A.value;
       st.windMode === `manual` && A.update({ twdDeg: st.twdDeg + dDir, twsKn: st.twsKn + dSpd });
     }),
+    (r.onSpeed = (d) => A.update({ speed: A.value.speed + d })),
+    (r.onEsc = hidePop),
+    W(`trim-pop-close`).addEventListener(`click`, hidePop),
+    Qe(W(`sim-dn`), () => r.onSpeed(-10)),
+    Qe(W(`sim-up`), () => r.onSpeed(10)),
     W(`btn-best`).addEventListener(`click`, () => r.onBest()),
     W(`btn-wind`).addEventListener(`click`, () => r.onWindMode()),
     Qe(W(`w-spd-dn`), () => r.onWind(0, -1)),
@@ -2050,13 +2115,13 @@ function Ye(e) {
     ((x = e), r.update(i));
     let o = r.value;
     if (!_) {
-      for (v += i; v >= $; )
+      for (v += i * simSpeed; v >= $; )
         if (((f = d), (p = y(l, d.t, d.x, d.y)), (d = ae(d, o, p, s, $)), (v -= $), d.t - C >= 0.12)) {
           let e = s.loa * 0.48;
           (S.push({ x: d.x - Math.sin(d.psi) * e, y: d.y - Math.cos(d.psi) * e, t: d.t }), (C = d.t));
         }
       for (; S.length && d.t - S[0].t > 18; ) S.shift();
-      ((m += (p.tws - m) * Je(i, 3)), (h += a(p.twd - h) * Je(i, 45)));
+      ((m += (p.tws - m) * Je(i * simSpeed, 3)), (h += a(p.twd - h) * Je(i * simSpeed, 45)));
     }
     let w = _ ? 1 : v / $,
       T = {
@@ -2564,18 +2629,40 @@ body {
   left: 50%;
 }
 .balance-tick {
-  background: var(--good);
+  color: var(--good);
+  pointer-events: none;
+  z-index: 2;
+  background: currentColor;
   border-radius: 2px;
   width: 4px;
   margin-left: -2px;
   position: absolute;
-  top: -9px;
-  bottom: -9px;
+  top: -22px;
+  bottom: -22px;
   left: 50%;
-  box-shadow: 0 0 0 1px #091c2699;
+  box-shadow: 0 0 0 1.5px #091c26e6;
+}
+.balance-tick:before,
+.balance-tick:after {
+  content: "";
+  border: 7px solid #0000;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 0 1px #091c26);
+}
+.balance-tick:before {
+  border-top-color: currentColor;
+  border-bottom-width: 0;
+  top: -3px;
+}
+.balance-tick:after {
+  border-bottom-color: currentColor;
+  border-top-width: 0;
+  bottom: -3px;
 }
 .balance-tick[data-over="1"] {
-  background: var(--warn);
+  color: var(--warn);
 }
 .bottom {
   grid-area: bottom;
@@ -2975,6 +3062,117 @@ button:active {
     transition: none;
   }
 }
+.leftcol {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  display: flex;
+}
+.speed-panel {
+  pointer-events: auto;
+  width: 204px;
+  padding: 8px;
+}
+.stepper button:disabled {
+  opacity: 0.35;
+}
+.trim-pop {
+  pointer-events: auto;
+  width: clamp(220px, 27vw, 330px);
+  padding: 8px 12px 10px;
+}
+.trim-pop[hidden] {
+  display: none;
+}
+.pop-head {
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  display: flex;
+}
+.pop-head h2 {
+  font-family: var(--display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--signal);
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.pop-head p,
+.pop-foot {
+  color: var(--ink-dim);
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.pop-foot {
+  margin-top: 6px;
+}
+#trim-pop-close {
+  flex: none;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  display: grid;
+}
+.pop-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+  margin-top: 6px;
+  font-size: 14px;
+}
+.pop-table th,
+.pop-table td {
+  text-align: left;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  padding: 3px 4px 3px 0;
+  font-weight: 500;
+}
+.pop-table thead th {
+  color: var(--ink-dim);
+  font-family: var(--display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-top: 0;
+  font-size: 12px;
+}
+.pop-table .was {
+  color: var(--ink-dim);
+}
+.pop-table .now,
+.pop-table .act {
+  color: var(--signal);
+  font-weight: 700;
+}
+.pop-table .same td,
+.pop-table .same th {
+  color: var(--ink-dim);
+  font-weight: 400;
+}
+@media (max-width: 760px), (max-height: 600px) {
+  .speed-panel {
+    display: none;
+  }
+}
+@media (max-width: 760px), (max-height: 799px) {
+  .trim-pop {
+    z-index: 5;
+    background: #0d2632f2;
+    width: min(360px, 100vw - 32px);
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 18px 60px #00000080;
+  }
+}
 .rightcol {
   flex-direction: column;
   align-items: stretch;
@@ -3202,6 +3400,7 @@ button:active {
       </div>
 
       <main class="middle">
+        <div class="leftcol">
         <section class="panel telltale-panel" aria-label="Telltales">
           <canvas id="telltales"></canvas>
           <div class="captions">
@@ -3209,6 +3408,30 @@ button:active {
             <div><span class="cap-name">Main leech</span><span class="cap-state" id="main-state">Streaming</span></div>
           </div>
         </section>
+        <section class="panel speed-panel" id="speed-panel" aria-label="Simulation speed">
+          <div class="stepper" role="group" aria-label="Simulation speed">
+            <button type="button" id="sim-dn" aria-label="Slower" title="Slower (G)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12" /></svg></button>
+            <span class="step-read"><span class="label">Sim speed</span><span class="step-val"><span id="sim-spd">100</span><small>%</small></span></span>
+            <button type="button" id="sim-up" aria-label="Faster" title="Faster (F)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12M12 6v12" /></svg></button>
+          </div>
+        </section>
+        <section class="panel trim-pop" id="trim-pop" role="dialog" aria-labelledby="trim-pop-title" hidden>
+          <header class="pop-head">
+            <div>
+              <h2 id="trim-pop-title">Best trim</h2>
+              <p id="trim-pop-sub"></p>
+            </div>
+            <button type="button" id="trim-pop-close" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+          </header>
+          <table class="pop-table">
+            <thead>
+              <tr><th scope="col">Control</th><th scope="col">Was</th><th scope="col">Now</th><th scope="col">Change</th></tr>
+            </thead>
+            <tbody id="trim-pop-rows"></tbody>
+          </table>
+          <p class="pop-foot" id="trim-pop-foot"></p>
+        </section>
+        </div>
         <div class="rightcol">
         <section class="panel gauges" aria-label="Wind and heel">
           <div class="gauge">
@@ -3343,7 +3566,7 @@ button:active {
           </button>
         </div>
         <p class="keys">
-          A/D steer · W/S main · Q/E traveller · Z/X vang · ↑/↓ genoa · U/O car · T best trim · M manual wind (, . turn · − + speed) · L lock helm · Space pause · R reset · V view · H help
+          A/D steer · W/S main · Q/E traveller · Z/X vang · ↑/↓ genoa · U/O car · T best trim · M manual wind (, . turn · − + speed) · L lock helm · F/G faster/slower · Space pause · R reset · V view · H help
         </p>
       </footer>
     </div>
@@ -3403,6 +3626,14 @@ button:active {
             <label><input type="radio" name="shifts" value="2" /><span>Large ±12°</span></label>
           </div>
         </fieldset>
+
+        <label class="field">
+          <span class="field-head"
+            ><span class="field-name">Simulation speed</span><span class="field-value"><output id="s-speed-out">100</output> %</span></span
+          >
+          <input type="range" id="s-speed" min="10" max="100" step="10" value="100" />
+          <span class="field-note">Slow everything down to watch what a change does. 100 % is real time.</span>
+        </label>
 
         <div class="settings-actions">
           <button type="button" id="s-defaults" class="btn-quiet">Defaults</button>
